@@ -7,6 +7,7 @@ enum DockSide {
 
 struct GlassDockWindow: View {
     @EnvironmentObject var windowManager: WindowManager
+    @EnvironmentObject var session: SessionManager       // 🆕 za zastavice
 
     @Binding var isVisible: Bool
     @Binding var dockSide: DockSide
@@ -20,46 +21,61 @@ struct GlassDockWindow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // LISTA PROZORA U DOCKU
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(dockedWindows) { win in
+                    // filtriramo prozore prema zastavicama u SessionManageru
+                    ForEach(dockedWindows.filter { isKindVisible($0.kind) }) { win in
                         DockItemView(
                             window: win,
-                            onRestore: {
-                                withAnimation(.spring(response: 0.3,
-                                                      dampingFraction: 0.85)) {
-                                    onUndock(win.id)
+                            onSwapToActive: {
+                                withAnimation(.spring(
+                                    response: 0.30,
+                                    dampingFraction: 0.85
+                                )) {
+                                    windowManager.swapDockWithOldestActive(dockedId: win.id)
                                 }
                             },
                             onClose: {
                                 if let idx = windowManager.windows.firstIndex(where: { $0.id == win.id }) {
-                                    windowManager.windows.remove(at: idx)
+                                    withAnimation(.spring(
+                                        response: 0.25,
+                                        dampingFraction: 0.9
+                                    )) {
+                                        windowManager.windows.remove(at: idx)
+                                    }
                                 }
                             },
-                            onDropOut: {
-                                withAnimation(.spring(response: 0.35,
-                                                      dampingFraction: 0.85)) {
+                            onDragOut: {
+                                withAnimation(.spring(
+                                    response: 0.35,
+                                    dampingFraction: 0.85
+                                )) {
                                     onDropFromDock(win.id)
-                                    isVisible = false
                                 }
+                            },
+                            onMoveUp: {
+                                windowManager.moveDocked(id: win.id, direction: -1)
+                            },
+                            onMoveDown: {
+                                windowManager.moveDocked(id: win.id, direction: 1)
                             }
                         )
                     }
                 }
             }
 
-            // DONJI BIJELI GUMB = RUČKA ZA CIJELI PANEL
             Button {
-                withAnimation(.spring(response: 0.35,
-                                      dampingFraction: 0.85)) {
+                withAnimation(.spring(
+                    response: 0.35,
+                    dampingFraction: 0.85
+                )) {
                     isVisible = false
                 }
             } label: {
                 HStack {
                     Spacer()
-                    Image(systemName: "chevron.left.arrow.right")
-                        .font(.system(size: 12, weight: .semibold))
+                    Image(systemName: "rectangle.on.rectangle")
+                        .font(.system(size: 11, weight: .medium))
                     Text("Prozori")
                         .font(.system(size: 11, weight: .semibold))
                     Spacer()
@@ -68,7 +84,7 @@ struct GlassDockWindow: View {
                 .padding(.vertical, 6)
                 .background(
                     Capsule()
-                        .fill(Color.white)
+                        .fill(Color.white.opacity(0.95))
                 )
                 .foregroundColor(.black)
             }
@@ -81,21 +97,20 @@ struct GlassDockWindow: View {
                     }
                     .onEnded { value in
                         let dx = value.translation.width
-                        let dy = value.translation.height
-                        let distance = sqrt(dx * dx + dy * dy)
+                        let distance = abs(dx)
 
-                        if distance < 5 {
-                            // tap već odrađen gore
-                        } else {
-                            if dx < -80 {
+                        if distance > 60 {
+                            if dx < 0 {
                                 dockSide = .left
-                            } else if dx > 80 {
+                            } else {
                                 dockSide = .right
                             }
                         }
 
-                        withAnimation(.spring(response: 0.3,
-                                              dampingFraction: 0.85)) {
+                        withAnimation(.spring(
+                            response: 0.3,
+                            dampingFraction: 0.85
+                        )) {
                             dragOffset = 0
                         }
                     }
@@ -109,9 +124,28 @@ struct GlassDockWindow: View {
                 .shadow(radius: 10)
         )
         .frame(maxHeight: .infinity, alignment: .center)
-        .frame(maxWidth: .infinity,
-               alignment: dockSide == .right ? .trailing : .leading)
+        .frame(
+            maxWidth: .infinity,
+            alignment: dockSide == .right ? .trailing : .leading
+        )
         .padding(dockSide == .right ? .trailing : .leading, 16)
+    }
+
+    // MARK: - Filtriranje po zastavicama iz SessionManager-a
+
+    private func isKindVisible(_ kind: WindowKind) -> Bool {
+        switch kind {
+        case .messages:
+            return session.showMessagesEntry
+        case .independentMessages:
+            return session.showIndependentMessagesEntry
+        case .history:
+            return session.showHistoryEntry
+        case .notes:
+            return true          // za sada bilješke uvijek dopuštene
+        case .settings:
+            return true          // settings se ne gasi zastavicama
+        }
     }
 }
 
@@ -119,9 +153,11 @@ struct GlassDockWindow: View {
 
 private struct DockItemView: View {
     let window: WindowState
-    let onRestore: () -> Void
+    let onSwapToActive: () -> Void
     let onClose: () -> Void
-    let onDropOut: () -> Void
+    let onDragOut: () -> Void
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
 
     @GestureState private var dragTranslation: CGSize = .zero
 
@@ -143,12 +179,25 @@ private struct DockItemView: View {
                         let dy = value.translation.height
                         let distance = sqrt(dx * dx + dy * dy)
 
-                        if distance < 15 {
-                            // tap → restore
-                            onRestore()
-                        } else {
-                            // veći drag → izvlačenje
-                            onDropOut()
+                        // klik (mali pomak) → swap najstarijeg aktivnog
+                        if distance < 12 {
+                            onSwapToActive()
+                            return
+                        }
+
+                        // vertikalno povlačenje → reorder unutar docka
+                        if abs(dy) > abs(dx) && abs(dy) > 25 {
+                            if dy < 0 {
+                                onMoveUp()
+                            } else {
+                                onMoveDown()
+                            }
+                            return
+                        }
+
+                        // horizontalno povlačenje → izvuci na ekran
+                        if abs(dx) > 40 {
+                            onDragOut()
                         }
                     }
             )
@@ -158,13 +207,17 @@ private struct DockItemView: View {
     private var itemContent: some View {
         switch window.kind {
         case .messages:
-            DockConversationItem(onRestore: onRestore, onClose: onClose)
+            DockConversationItem(onRestore: onSwapToActive, onClose: onClose)
+
+        case .independentMessages:
+            DockIndependentMessagesItem(onRestore: onSwapToActive, onClose: onClose)
+
         case .history:
-            DockHistoryItem(onRestore: onRestore, onClose: onClose)
+            DockHistoryItem(onRestore: onSwapToActive, onClose: onClose)
         case .notes:
-            DockNotesItem(onRestore: onRestore, onClose: onClose)
+            DockNotesItem(onRestore: onSwapToActive, onClose: onClose)
         case .settings:
-            DockHistoryItem(onRestore: onRestore, onClose: onClose) // fallback
+            DockHistoryItem(onRestore: onSwapToActive, onClose: onClose) // fallback
         }
     }
 }

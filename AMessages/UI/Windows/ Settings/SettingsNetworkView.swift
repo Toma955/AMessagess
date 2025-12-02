@@ -5,18 +5,21 @@ struct SettingsNetworkView: View {
 
     @Binding var serverText: String
     @Binding var isTestingConnection: Bool
-    @Binding var connectionStatus: SettingsWindow.ConnectionStatus?
+    @Binding var connectionStatus: ConnectionStatus?
+    @Binding var connectionErrorText: String?
 
     let runTestConnection: () -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                // MARK: - Naslov
                 Text("Internet")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.white)
                     .padding(.bottom, 4)
 
+                // MARK: - Adresa servera
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Adresa servera")
                         .font(.system(size: 13, weight: .semibold))
@@ -36,16 +39,24 @@ struct SettingsNetworkView: View {
                                 .fill(Color.white.opacity(0.08))
                         )
                         .foregroundColor(.white)
+
+                    Text("WebSocket: \(session.webSocketURLString)")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.6))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .padding(.top, 2)
                 }
 
                 Divider().background(Color.white.opacity(0.15))
 
+                // MARK: - Test konekcije
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Test konekcije")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.white.opacity(0.9))
 
-                    Text("Provjeri može li se aplikacija spojiti na zadani server (zasad simulacija).")
+                    Text("Provjeri može li se aplikacija spojiti na zadani server.")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.6))
 
@@ -88,6 +99,14 @@ struct SettingsNetworkView: View {
                                     .foregroundColor(.white.opacity(0.8))
                             }
                         }
+                    }
+
+                    // poruka greške iz testa (npr. DNS, timeout…)
+                    if let err = connectionErrorText, !err.isEmpty {
+                        Text(err)
+                            .font(.system(size: 10))
+                            .foregroundColor(.red.opacity(0.85))
+                            .padding(.top, 4)
                     }
                 }
             }

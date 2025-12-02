@@ -3,6 +3,7 @@ import Foundation
 enum MessageDirection: String, Codable {
     case incoming
     case outgoing
+    case system   // npr. "razgovor završen", "sesija istekla"
 }
 
 struct Message: Identifiable, Codable {

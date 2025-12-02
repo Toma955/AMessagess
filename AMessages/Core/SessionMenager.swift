@@ -9,6 +9,21 @@ final class SessionManager: ObservableObject {
 
     // Island / self-ID
     @Published var islandCurrentId: String = ""
+    
+    // status bar / prečaci – vidljivost
+    @Published var showSessionIdField: Bool = true
+
+    @Published var showMessagesEntry: Bool = true
+    @Published var showIndependentMessagesEntry: Bool = true
+    @Published var showContactsEntry: Bool = true
+    @Published var showHistoryEntry: Bool = true
+    @Published var showNotesEntry: Bool = true
+
+
+    @Published var showLockButton: Bool = true
+    @Published var showQuitButton: Bool = true
+    @Published var focusModeEnabled: Bool = false
+
 
     // Call setup stanje
     @Published var pendingCallId: String? = nil
@@ -20,8 +35,8 @@ final class SessionManager: ObservableObject {
 
     // MARK: - UI & tema
 
-    /// Adresa servera (npr. https://api.amessages.app)
-    @Published var serverAddress: String = ""
+    /// HTTP baza (za sada: tvoj Render server)
+    @Published var serverAddress: String = "https://amessagesserver.onrender.com"
 
     /// Auto-lock u minutama (0 = isključeno)
     @Published var autoLockMinutes: Int = 5
@@ -32,6 +47,22 @@ final class SessionManager: ObservableObject {
     /// Pomoćni: interval u sekundama (za timer u budućnosti)
     var autoLockInterval: TimeInterval {
         autoLockMinutes <= 0 ? 0 : TimeInterval(autoLockMinutes * 60)
+    }
+
+    /// Iz HTTP → WebSocket URL (npr. https://host → wss://host)
+    var webSocketURLString: String {
+        let trimmed = serverAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.hasPrefix("https://") {
+            let hostPart = trimmed.dropFirst("https://".count)
+            return "wss://" + hostPart
+        } else if trimmed.hasPrefix("http://") {
+            let hostPart = trimmed.dropFirst("http://".count)
+            return "ws://" + hostPart
+        } else {
+            // ako user ručno unese već wss://, samo vrati to
+            return trimmed
+        }
     }
 
     // widgets

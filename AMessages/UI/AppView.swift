@@ -12,8 +12,49 @@ struct AppView: View {
     @State private var dockSide: DockSide = .right
     @State private var dockDragOffset: CGFloat = 0
 
-    // globalni drop indikator
     @State private var isGlobalDropTargeted: Bool = false
+
+    #if os(macOS)
+    @State private var isAppActive: Bool = true
+
+    private let appDidBecomeActive =
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+    private let appDidResignActive =
+        NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
+    #endif
+
+    // MARK: - Trenutna tema iz SessionManagera
+
+    private var currentThemeId: AppThemeID {
+        if let raw = Int(session.selectedTheme) {
+            return AppThemeID.fromStored(raw)
+        } else {
+            return .onlineGreen    // default
+        }
+    }
+
+    // MARK: - Promjena pozadina
+    @ViewBuilder
+    private var themedBackground: some View {
+        switch currentThemeId {
+        case .onlineGreen:
+            BackgroundView()
+        case .oceanBlue:
+            OceanBackgroundView()
+        case .violetNight:
+            NordicBackgroundView()
+        case .goldenSunset:
+            OrientBackgroundView()
+        case .warmOrange:
+            GreenParadiseBackgroundView()
+        case .alertRed:
+            NebulaBackgroundView()
+        case .pureBlack:
+            Color.black.ignoresSafeArea()
+        case .pureWhite:
+            Color.white.ignoresSafeArea()
+        }
+    }
 
     private func collapseIsland() {
         session.islandCollapseTick += 1
@@ -24,12 +65,14 @@ struct AppView: View {
         switch kind {
         case .messages:
             MessengerWindow()
+        case .independentMessages:
+            IndependentMessagesWindow()
         case .settings:
             SettingsWindow()
-        case .history:
-            HistoryWindow()
         case .notes:
             NotesWindow()
+        case .history:
+            HistoryWindow()
         }
     }
 
@@ -56,7 +99,8 @@ struct AppView: View {
                     availableForWindows / CGFloat(windowCount))
 
             ZStack {
-                BackgroundView()
+                // theme-aware pozadina
+                themedBackground
                     .contentShape(Rectangle())
                     .onTapGesture { collapseIsland() }
 
@@ -70,7 +114,7 @@ struct AppView: View {
                 }
 
                 VStack(spacing: 18) {
-                    // ISLAND
+                    // MARK: ISLAND
                     HStack {
                         Spacer()
                         Island()
@@ -78,12 +122,10 @@ struct AppView: View {
                         Spacer()
                     }
 
-                    // prozori malo niže
                     Spacer(minLength: 70)
 
                     // DOCK + PROZORI
                     HStack(alignment: .center, spacing: gap) {
-                        // lijevi rub
                         Spacer()
                             .frame(width: gap)
 
@@ -104,7 +146,7 @@ struct AppView: View {
                             .frame(width: dockWidth)
                         }
 
-                        // PROZORI
+                        // MARK: GLAVNI PROZORI
                         if active.isEmpty {
                             AppWindow {
                                 WelcomeWindow()
@@ -164,7 +206,6 @@ struct AppView: View {
                             .frame(width: dockWidth)
                         }
 
-                        // desni rub
                         Spacer()
                             .frame(width: gap)
                     }
@@ -178,7 +219,7 @@ struct AppView: View {
 
                     Spacer(minLength: 12)
 
-                    // gumb "Prozori" kad je dock skriven
+                    // MARK: "Prozori" DOCK skriven
                     if !docked.isEmpty && !isDockVisible {
                         HStack {
                             if dockSide == .left {
@@ -206,9 +247,11 @@ struct AppView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .padding(.leading, 40)
+
                                 Spacer()
                             } else {
                                 Spacer()
+
                                 Button {
                                     withAnimation(
                                         .spring(response: 0.35,
@@ -238,7 +281,7 @@ struct AppView: View {
                         .padding(.bottom, 4)
                     }
 
-                    // STATUS BAR
+                    // MARK: - STATUS BAR
                     AppStatusBar(
                         onLock: {
                             session.lock()
@@ -265,8 +308,14 @@ struct AppView: View {
                         onOpenMessages: {
                             windowManager.open(kind: .messages)
                         },
+                        onOpenIndependentMessages: {
+                            windowManager.open(kind: .independentMessages)
+                        },
+                        onOpenNotes: {
+                            windowManager.open(kind: .notes)
+                        },
                         onOpenContacts: {
-                            windowManager.open(kind: .history)
+                            windowManager.open(kind: .history)   // za sada isto kao arhiva
                         },
                         onOpenSettings: {
                             windowManager.toggleSettings()
@@ -274,12 +323,22 @@ struct AppView: View {
                         onOpenHistory: {
                             windowManager.open(kind: .history)
                         }
+
                     )
                     .simultaneousGesture(
                         TapGesture().onEnded { collapseIsland() }
                     )
                     .padding(.bottom, 16)
                 }
+                #if os(macOS)
+                if session.focusModeEnabled && !isAppActive {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .overlay(Color.black.opacity(0.45))
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                }
+                #endif
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .onDrop(
@@ -287,6 +346,14 @@ struct AppView: View {
                 isTargeted: $isGlobalDropTargeted,
                 perform: handleAppDrop(providers:)
             )
+            #if os(macOS)
+            .onReceive(appDidBecomeActive) { _ in
+                isAppActive = true
+            }
+            .onReceive(appDidResignActive) { _ in
+                isAppActive = false
+            }
+            #endif
         }
     }
 
@@ -308,7 +375,7 @@ struct AppView: View {
             else { return }
 
             DispatchQueue.main.async {
-                // globalni “queue” za history – HistoryWindow će ovo pokupit
+                // HistoryWindow će ovo pokupit
                 windowManager.pendingHistoryFileURL = url
 
                 // ako nema otvorenog history prozora → otvori novi

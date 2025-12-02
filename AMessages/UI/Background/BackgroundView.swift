@@ -21,20 +21,20 @@ private struct Blob: Identifiable {
 
 struct BackgroundView: View {
     @State private var blobs: [Blob] = []
-    private let timer = Timer.publish(every: 1/60, on: .main, in: .common).autoconnect()
+    private let timer = Timer.publish(every: 1 / 60, on: .main, in: .common).autoconnect()
 
     var body: some View {
         GeometryReader { geo in
             Canvas { context, size in
-                // crna pozadina
                 let rect = CGRect(origin: .zero, size: size)
                 context.fill(Path(rect), with: .color(.black))
 
-                // lagani blur da omekša rubove
-                context.addFilter(.blur(radius: 8))
+                // adaptivni blur – mali view = mali blur, veliki view = veći blur
+                let minDim = min(size.width, size.height)
+                let blurRadius = max(1, min(minDim / 80, 10))
+                context.addFilter(.blur(radius: blurRadius))
                 context.blendMode = .normal
 
-                // svaki blob = JEDAN path od više krugova, fiksan oblik
                 for blob in blobs {
                     var path = Path()
 
@@ -61,14 +61,16 @@ struct BackgroundView: View {
                         ))
                     }
 
-                    // uniformna boja, lagano prozirna
                     context.fill(path, with: .color(blob.color.opacity(0.6)))
                 }
             }
             .ignoresSafeArea()
             .onAppear {
-                if blobs.isEmpty {
-                    setupBlobs(in: geo.size)
+                // izbjegni 0x0 layout u previewu
+                DispatchQueue.main.async {
+                    if blobs.isEmpty {
+                        setupBlobs(in: geo.size)
+                    }
                 }
             }
             .onChange(of: geo.size) { newSize in
@@ -95,28 +97,69 @@ struct BackgroundView: View {
             Color(red: 0.95, green: 0.30, blue: 0.15)
         ]
 
-        // broj oblika
-        let baseTotal = 26
+        let minDimension = min(width, height)
+        let isTiny = minDimension < 140      // npr. 130×80 preview
+        let isSmall = minDimension < 260     // još uvijek mali, ali ne ekstremno
+
+        // broj oblika skaliran po površini + mode
+        let baseTotal: Int
+        if isTiny {
+            baseTotal = 40   // više malih blobova
+        } else if isSmall {
+            baseTotal = 30
+        } else {
+            baseTotal = 26
+        }
+
         let areaFactor = max((width * height) / (800 * 800), 0.4)
         let total = Int(CGFloat(baseTotal) * areaFactor)
 
         for _ in 0..<total {
-            let maxR = max(40, min(120, min(width, height) / 3))
-            let r = CGFloat.random(in: 50...maxR)
+            let baseMaxR: CGFloat
+            let minR: CGFloat
+
+            if isTiny {
+                // 🔹 JAKO MALI VIEW (preview u postavkama)
+                // mali radijusi, ali ih ima više
+                baseMaxR = min(minDimension / 3.5, 18) // max ~18
+                minR = max(4, baseMaxR * 0.4)          // 4–7
+            } else if isSmall {
+                // 🔹 Mali view (ali veći od previewa)
+                baseMaxR = min(minDimension / 3, 32)   // max ~32
+                minR = max(10, baseMaxR * 0.5)        // 10–16
+            } else {
+                // 🔹 Veliki view (glavna pozadina)
+                baseMaxR = min(minDimension / 2.5, 110)
+                minR = max(36, baseMaxR * 0.45)       // 36+
+            }
+
+            let maxR = max(baseMaxR, minR)
+            guard maxR >= minR else { continue }
+
+            let r = CGFloat.random(in: minR...maxR)
 
             let x: CGFloat = width > 2 * r ? .random(in: r...(width - r)) : width / 2
             let y: CGFloat = height > 2 * r ? .random(in: r...(height - r)) : height / 2
 
-            // svi malo brži, ali i dalje glatki
-            // ~70% umjereno, ~25% brži, ~5% najbrži
-            let category = Double.random(in: 0...1)
+            // 🔹 Brzina – u tiny previewu malo brže
             let speed: CGFloat
-            if category < 0.7 {
-                speed = .random(in: 0.07...0.12)
-            } else if category < 0.95 {
-                speed = .random(in: 0.13...0.18)
+            let roll = Double.random(in: 0...1)
+            if isTiny {
+                if roll < 0.7 {
+                    speed = .random(in: 0.10...0.16)
+                } else if roll < 0.95 {
+                    speed = .random(in: 0.17...0.22)
+                } else {
+                    speed = .random(in: 0.23...0.30)
+                }
             } else {
-                speed = .random(in: 0.19...0.26)
+                if roll < 0.7 {
+                    speed = .random(in: 0.07...0.12)
+                } else if roll < 0.95 {
+                    speed = .random(in: 0.13...0.18)
+                } else {
+                    speed = .random(in: 0.19...0.26)
+                }
             }
 
             let angle = CGFloat.random(in: 0...(2 * .pi))
@@ -125,7 +168,6 @@ struct BackgroundView: View {
 
             let color = colors.randomElement() ?? colors[0]
 
-            // fiksni lobeovi – oblik se poslije NE mijenja
             var lobes: [BlobLobe] = []
             let lobeCount = Int.random(in: 3...5)
             for i in 0..<lobeCount {

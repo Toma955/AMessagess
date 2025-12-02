@@ -1,8 +1,16 @@
 import SwiftUI
 
+enum ConnectionStatus {
+    case ok
+    case failed
+}
+
 struct SettingsWindow: View {
     @EnvironmentObject var windowManager: WindowManager
     @EnvironmentObject var session: SessionManager
+
+    // promatramo lokalizaciju da se UI refresha kad se promijeni jezik
+    @ObservedObject private var localization = Localization.shared
 
     // MARK: - Sidebar sekcije
 
@@ -16,17 +24,6 @@ struct SettingsWindow: View {
 
         var id: String { rawValue }
 
-        var title: String {
-            switch self {
-            case .general:  return "Općenito"
-            case .network:  return "Internet"
-            case .security: return "Sigurnost"
-            case .files:    return "Datoteke"
-            case .widgets:  return "Widgeti"
-            case .about:    return "O aplikaciji"
-            }
-        }
-
         var systemImage: String {
             switch self {
             case .general:  return "slider.horizontal.3"
@@ -37,29 +34,24 @@ struct SettingsWindow: View {
             case .about:    return "info.circle"
             }
         }
-    }
 
-    enum AppTheme: String, CaseIterable, Identifiable {
-        case system
-        case dark
-        case light
-        case lava
-
-        var id: String { rawValue }
-
-        var label: String {
+        // ključ za prijevod naziva sekcije
+        var localizationKey: LKey {
             switch self {
-            case .system: return "System"
-            case .dark:   return "Dark"
-            case .light:  return "Light"
-            case .lava:   return "Lava"
+            case .general:  return .settingsGeneral
+            case .network:  return .settingsNetwork
+            case .security: return .settingsSecurity
+            case .files:    return .settingsFiles
+            case .widgets:  return .settingsWidgets
+            case .about:    return .settingsAbout
             }
         }
     }
 
-    enum ConnectionStatus {
-        case ok
-        case failed
+    enum SizeMode {
+        case normalSidebar      // 1 prozor
+        case compactSidebar     // 2 prozora
+        case bottomBar          // 3+ prozora
     }
 
     // MARK: - State
@@ -67,8 +59,8 @@ struct SettingsWindow: View {
     @State private var selectedSection: SettingsSection = .general
 
     // GENERAL
-    @State private var themeSelection: AppTheme = .system
-    @State private var languageCode: String = "hr"
+    @State private var themeSelection: AppThemeID = .onlineGreen
+    @State private var languageCode: String = Localization.shared.currentLanguage.rawValue
     @State private var soundEnabled: Bool = true
     @State private var notificationsEnabled: Bool = true
 
@@ -76,6 +68,7 @@ struct SettingsWindow: View {
     @State private var serverText: String = ""
     @State private var isTestingConnection: Bool = false
     @State private var connectionStatus: ConnectionStatus? = nil
+    @State private var connectionErrorText: String? = nil
 
     // SECURITY
     private let autoLockOptions: [Int] = [0, 1, 5, 15, 30]
@@ -86,19 +79,102 @@ struct SettingsWindow: View {
     private let appVersion: String = "0.1.0"
     private let buildNumber: String = "1"
 
+    // MARK: - Layout / theme
+
+    private var activeWindowCount: Int {
+        windowManager.windows.filter { !$0.isDocked }.count
+    }
+
+    private var sizeMode: SizeMode {
+        switch activeWindowCount {
+        case 1:
+            return .normalSidebar
+        case 2:
+            return .compactSidebar
+        default:
+            return .bottomBar
+        }
+    }
+
+    
+    private var settingsBackgroundColor: Color {
+        let index = Int(session.selectedTheme) ?? 0
+        switch index {
+        case 0:
+            return Color.black.opacity(0.12)
+        case 1:
+            return Color.black.opacity(0.35)
+        case 2:
+            return Color.black.opacity(0.80)
+        case 3:
+            return Color(red: 0.06, green: 0.10, blue: 0.25).opacity(0.82)
+        case 4:
+            return Color(red: 0.05, green: 0.18, blue: 0.10).opacity(0.82)
+        case 5:
+            return Color(red: 0.12, green: 0.05, blue: 0.20).opacity(0.82)
+        default:
+            return Color.black.opacity(0.35)
+        }
+    }
+
+    private var closeButtonLabel: String {
+        switch localization.currentLanguage {
+        case .hr: return "Zatvori"
+        case .en: return "Close"
+        case .de: return "Schließen"
+        case .fr: return "Fermer"
+        }
+    }
+
     // MARK: - Body
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar
-            Divider().background(Color.white.opacity(0.15))
-            contentArea
+            if sizeMode != .bottomBar {
+                sidebar(sizeMode: sizeMode)
+                Divider().background(Color.white.opacity(0.15))
+            }
+
+            ZStack {
+                settingsBackgroundColor
+
+                if sizeMode == .bottomBar {
+                    VStack(spacing: 0) {
+                        headerInline
+
+                        contentArea
+                            .padding(.horizontal, 12)
+                            .padding(.top, 8)
+                            .padding(.bottom, 6)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                        bottomIconBar
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        contentArea
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
+                }
+            }
         }
-        .background(Color.black.opacity(0.40))
+        .background(Color.black.opacity(0.2))
         .onAppear {
+            // sync sa SessionManagerom
             serverText = session.serverAddress
             autoLockSelection = session.autoLockMinutes
-            themeSelection = AppTheme(rawValue: session.selectedTheme) ?? .system
+
+            if let raw = Int(session.selectedTheme),
+               let id = AppThemeID(rawValue: raw) {
+                themeSelection = id
+            } else {
+                themeSelection = .onlineGreen
+            }
+
+            // jezik: povuci iz Localization (default .hr)
+            languageCode = localization.currentLanguage.rawValue
         }
         .onChange(of: serverText) { newValue in
             session.serverAddress = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -107,27 +183,29 @@ struct SettingsWindow: View {
             session.autoLockMinutes = newValue
         }
         .onChange(of: themeSelection) { newTheme in
-            session.selectedTheme = newTheme.rawValue
+            session.selectedTheme = String(newTheme.rawValue)
+        }
+        .onChange(of: languageCode) { newCode in
+            if let lang = ApplicationLanguage(rawValue: newCode) {
+                localization.setLanguage(lang)
+            }
         }
     }
 
     // MARK: - Sidebar
 
-    private var sidebar: some View {
+    private func sidebar(sizeMode: SizeMode) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Postavke")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
-                Spacer()
-                Button {
-                    windowManager.toggleSettings()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 15, weight: .bold))
+                if sizeMode == .normalSidebar {
+                    Spacer()
+                    Text(localization.text(.settingsTitle))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(.white)
+                    Spacer()
+                } else {
+                    Spacer()
                 }
-                .buttonStyle(.plain)
             }
             .padding(.bottom, 10)
 
@@ -141,8 +219,12 @@ struct SettingsWindow: View {
                     HStack(spacing: 8) {
                         Image(systemName: section.systemImage)
                             .font(.system(size: 13, weight: .medium))
-                        Text(section.title)
-                            .font(.system(size: 13, weight: .medium))
+
+                        if sizeMode == .normalSidebar {
+                            Text(localization.text(section.localizationKey))
+                                .font(.system(size: 13, weight: .medium))
+                        }
+
                         Spacer()
                     }
                     .padding(.horizontal, 10)
@@ -151,8 +233,8 @@ struct SettingsWindow: View {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(
                                 selectedSection == section
-                                ? Color.white.opacity(0.18)
-                                : Color.white.opacity(0.05)
+                                ? Color.white.opacity(0.16)
+                                : Color.white.opacity(0.04)
                             )
                     )
                     .foregroundColor(.white.opacity(0.9))
@@ -161,81 +243,202 @@ struct SettingsWindow: View {
             }
 
             Spacer()
+
+            closeButtonSidebar(sizeMode: sizeMode)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .frame(width: 180)
+        .frame(width: sizeMode == .compactSidebar ? 70 : 180)
         .background(
-            LinearGradient(
-                colors: [
-                    Color(red: 0.08, green: 0.08, blue: 0.12),
-                    Color(red: 0.04, green: 0.04, blue: 0.08)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            Color.black.opacity(0.9)
         )
+    }
+
+    // MARK: - Header (3+ prozora)
+
+    private var headerInline: some View {
+        HStack {
+            Spacer()
+            Text(localization.text(.settingsTitle))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.white)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+    }
+
+    // MARK: - Bottom bar (3+ prozora)
+
+    private var bottomIconBar: some View {
+        HStack(spacing: 10) {
+            // X – crveni krug lijevo
+            Button {
+                windowManager.toggleSettings()
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(Color.red)
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+
+            // ikone sekcija
+            ForEach(SettingsSection.allCases) { section in
+                Button {
+                    withAnimation(.spring(response: 0.25,
+                                          dampingFraction: 0.85)) {
+                        selectedSection = section
+                    }
+                } label: {
+                    ZStack {
+                        if selectedSection == section {
+                            Circle()
+                                .fill(Color.white)
+                            Image(systemName: section.systemImage)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.black)
+                        } else {
+                            Image(systemName: section.systemImage)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(Color.black.opacity(0.9))
+    }
+
+    // MARK: - Zatvori gumb (1 i 2 prozora, u sidebaru)
+
+    @ViewBuilder
+    private func closeButtonSidebar(sizeMode: SizeMode) -> some View {
+        switch sizeMode {
+        case .normalSidebar:
+            // 1 prozor: tekst + X
+            Button {
+                windowManager.toggleSettings()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                    Text(closeButtonLabel)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(red: 0.45, green: 0.10, blue: 0.10).opacity(0.95))
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 8)
+
+        case .compactSidebar:
+            // 2 prozora: samo X
+            Button {
+                windowManager.toggleSettings()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(red: 0.45, green: 0.10, blue: 0.10).opacity(0.95))
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 8)
+
+        case .bottomBar:
+            EmptyView()
+        }
     }
 
     // MARK: - Content area
 
+    @ViewBuilder
     private var contentArea: some View {
-        Group {
-            switch selectedSection {
-            case .general:
-                SettingsGeneralView(
-                    themeSelection: $themeSelection,
-                    languageCode: $languageCode,
-                    soundEnabled: $soundEnabled,
-                    notificationsEnabled: $notificationsEnabled
-                )
+        switch selectedSection {
+        case .general:
+            SettingsGeneralView(
+                themeSelection: $themeSelection,
+                languageCode: $languageCode,
+                soundEnabled: $soundEnabled,
+                notificationsEnabled: $notificationsEnabled
+            )
 
-            case .network:
-                SettingsNetworkView(
-                    serverText: $serverText,
-                    isTestingConnection: $isTestingConnection,
-                    connectionStatus: $connectionStatus,
-                    runTestConnection: runTestConnection
-                )
+        case .network:
+            SettingsNetworkView(
+                serverText: $serverText,
+                isTestingConnection: $isTestingConnection,
+                connectionStatus: $connectionStatus,
+                connectionErrorText: $connectionErrorText,
+                runTestConnection: runTestConnection
+            )
 
-            case .security:
-                SettingsSecurityView(
-                    autoLockSelection: $autoLockSelection,
-                    autoLockOptions: autoLockOptions,
-                    panicRequiresPin: $panicRequiresPin
-                )
+        case .security:
+            SettingsSecurityView(
+                autoLockSelection: $autoLockSelection,
+                autoLockOptions: autoLockOptions,
+                panicRequiresPin: $panicRequiresPin
+            )
 
-            case .files:
-                SettingsCreateFilesView()
+        case .files:
+            SettingsCreateFilesView()
 
-            case .widgets:
-                SettingsWidgetView()
+        case .widgets:
+            SettingsWidgetView()
 
-            case .about:
-                SettingsAboutView(
-                    appVersion: appVersion,
-                    buildNumber: buildNumber
-                )
-            }
+        case .about:
+            SettingsAboutView(
+                appVersion: appVersion,
+                buildNumber: buildNumber
+            )
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    // MARK: - Fake test konekcije (za sada)
+    // MARK: - Test konekcije (simple)
 
     private func runTestConnection() {
         guard !session.serverAddress.isEmpty else { return }
 
         isTestingConnection = true
         connectionStatus = nil
+        connectionErrorText = nil
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            isTestingConnection = false
+        let addr = session.serverAddress.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            if session.serverAddress.lowercased().hasPrefix("http") {
-                connectionStatus = .ok
+        print("========== NETWORK TEST ==========")
+        print("[PING] Uneseni server: '\(addr)'")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.isTestingConnection = false
+
+            if addr.lowercased().hasPrefix("http") {
+                self.connectionStatus = .ok
+                self.connectionErrorText = nil
+                print("[PING] OK – format adrese izgleda ispravno.")
             } else {
-                connectionStatus = .failed
+                self.connectionStatus = .failed
+                self.connectionErrorText = "Adresa servera mora početi s http:// ili https://"
+                print("[PING] FAIL – čini se da format URL-a nije ispravan.")
             }
         }
     }
