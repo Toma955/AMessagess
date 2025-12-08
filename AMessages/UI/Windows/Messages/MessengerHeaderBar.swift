@@ -19,6 +19,12 @@ struct MessengerHeaderBar<BottomContent: View>: View {
     private let fixedWidth: CGFloat = 420
     private let themeCount = 6
 
+    /// Flag – prikaz krugova za teme (umjesto naslova)
+    @State private var showThemePicker: Bool = false
+
+    /// NOVO – stanje expand/collapse za ConnectionIndicator
+    @State private var isConnectionIndicatorExpanded: Bool = false
+
     init(
         title: String,
         isActive: Bool,
@@ -43,9 +49,9 @@ struct MessengerHeaderBar<BottomContent: View>: View {
 
     var body: some View {
         VStack(spacing: showsBottomBar ? 8 : 4) {
-            // GORNJI RED – X, -, lampica, title, theme dots, search, settings
+            // GORNJI RED – X, -, lampica, SREDINA (title / krugovi), desno search + settings + indikator
             HStack(spacing: 10) {
-                // lijevo: X, -, lampica
+                // Lijevo: X, -, lampica
                 HStack(spacing: 6) {
                     Button(action: onClose) {
                         Image(systemName: "xmark")
@@ -64,50 +70,43 @@ struct MessengerHeaderBar<BottomContent: View>: View {
                         .frame(width: 8, height: 8)
                 }
 
+                // SREDINA – ili naslov ili theme krugovi
                 Spacer()
 
-                // title – sakrij kad su postavke ili search upaljeni
-                if !showsBottomBar {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                // desno: theme dots + search + settings
-                HStack(spacing: 8) {
-                    // 6 tema – uvijek u istom redu s ikonicama
-                    ForEach(0..<themeCount, id: \.self) { idx in
-                        Button {
-                            selectedThemeIndex = idx
-                            print("🎨 [THEME] Odabran preset \(idx)")
-                        } label: {
-                            Circle()
-                                .fill(themeColor(for: idx))
-                                .frame(width: 18, height: 18)
-                                .overlay(
-                                    Circle()
-                                        .stroke(
-                                            idx == selectedThemeIndex
-                                            ? Color.white.opacity(0.9)
-                                            : Color.white.opacity(0.3),
-                                            lineWidth: idx == selectedThemeIndex ? 2 : 1
-                                        )
-                                )
-                        }
-                        .buttonStyle(.plain)
+                Group {
+                    if showThemePicker {
+                        themePicker
+                    } else if !showsBottomBar {
+                        Text(title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
+                }
+                .frame(maxWidth: 220)
 
-                    Button(action: onSearch) {
+                Spacer()
+
+                // Desno: search + settings + CONNECTION INDICATOR
+                HStack(spacing: 8) {
+                    // SEARCH
+                    Button {
+                        // kad ideš u search – sakrij krugove
+                        showThemePicker = false
+                        onSearch()
+                    } label: {
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.white)
                     }
                     .buttonStyle(.plain)
 
-                    Button(action: onQuickSettings) {
+                    // SETTINGS – pali/gasi prikaz krugova u sredini
+                    Button {
+                        showThemePicker.toggle()
+                        onQuickSettings()
+                    } label: {
                         ZStack {
                             if showsBottomBar {
                                 Circle()
@@ -120,6 +119,14 @@ struct MessengerHeaderBar<BottomContent: View>: View {
                         }
                     }
                     .buttonStyle(.plain)
+
+                    // NOVO: indikator veze kao child unutar headera
+                    ConnectionIndicator(
+                        mode: isActive ? .server : .notConnected,
+                        isExpanded: $isConnectionIndicatorExpanded
+                    ) {
+                        // kasnije ovdje možeš otvoriti topologiju / dijagnostiku
+                    }
                 }
             }
 
@@ -136,6 +143,33 @@ struct MessengerHeaderBar<BottomContent: View>: View {
                 .fill(Color.black.opacity(0.90))
         )
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Theme picker – KRUGOVI U SREDINI
+
+    private var themePicker: some View {
+        HStack(spacing: 8) {
+            ForEach(0..<themeCount, id: \.self) { idx in
+                Button {
+                    selectedThemeIndex = idx
+                    print("🎨 [THEME] Odabran preset \(idx)")
+                } label: {
+                    Circle()
+                        .fill(themeColor(for: idx))
+                        .frame(width: 18, height: 18)
+                        .overlay(
+                            Circle()
+                                .stroke(
+                                    idx == selectedThemeIndex
+                                    ? Color.white.opacity(0.9)
+                                    : Color.white.opacity(0.3),
+                                    lineWidth: idx == selectedThemeIndex ? 2 : 1
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private func themeColor(for index: Int) -> LinearGradient {

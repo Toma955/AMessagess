@@ -6,7 +6,7 @@ import SwiftUI
 import Foundation
 
 /// ViewModel za neovisne poruke – drži store agenata i osnovnu logiku.
-final class ConnectionAgentViewModel: ObservableObject {
+final class IndependentMessagesAgentViewModel: ObservableObject {
 
     @Published var store: ConnectionAgentStore
 

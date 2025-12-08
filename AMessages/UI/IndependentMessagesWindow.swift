@@ -3,8 +3,13 @@ import SwiftUI
 struct IndependentMessagesWindow: View {
     @EnvironmentObject var windowManager: WindowManager
     @EnvironmentObject var session: SessionManager
+    @EnvironmentObject var conversationManager: ConversationManager
 
     @StateObject private var roomSession = RoomSessionManager()
+    
+    // Agent context i watchman za sistemske poruke
+    @State private var agentContext: IndependentMessagesAgentContext?
+    @State private var watchman: IndependentMessagesWatchman?
 
     // stanje konekcije
     @State private var roomId: String = ""
@@ -16,7 +21,24 @@ struct IndependentMessagesWindow: View {
     // tema (isti index kao u Messengeru / Settingsu)
     @State private var selectedThemeIndex: Int = 0
 
-    // ista logika pozadine kao u MessengerWindow
+    // input bar
+    @State private var messageText: String = ""
+    @State private var sendOnEnter: Bool = false
+    private let barWidth: CGFloat = 420
+    private let barHeight: CGFloat = 45
+    private let controlSize: CGFloat = 30
+
+    // indikator veze
+    @State private var isConnectionIndicatorExpanded: Bool = false
+
+    // kako trenutno prikazujemo tip veze
+    private var connectionMode: ConnectionIndicator.Mode {
+        if !isConnectedToRoom { return .notConnected }
+        // zasad: ako pri joinu server radi → ovo je “Ser”
+        return isServerConnected ? .server : .notConnected
+    }
+
+    // pozadina chata (kopirano iz MessengerWindow)
     private var chatBackgroundColor: Color {
         switch selectedThemeIndex {
         case 0:
@@ -38,24 +60,29 @@ struct IndependentMessagesWindow: View {
 
     var body: some View {
         VStack(spacing: 0) {
+
             if isConnectedToRoom {
-                // ======================================
-                //    HEADER + "AGENT" UMJESTO CHATA
-                // ======================================
+                // =========================
+                //   HEADER + “AGENT” + INPUT
+                // =========================
                 HStack {
                     Spacer()
 
-                    MessengerHeaderBar(
-                        title: "Neovisne poruke",
-                        isActive: isConnectedToRoom,
-                        selectedThemeIndex: $selectedThemeIndex,
-                        onClose: closeWindow,
-                        onMinimize: { },
-                        onSearch: { },          // zasad ne koristimo
-                        onQuickSettings: { },   // zasad ne koristimo
-                        showsBottomBar: false
-                    ) {
-                        EmptyView()             // nema donjeg bara (quick settings/search)
+                    // HEADER + indikator u istom crnom baru
+                    ZStack(alignment: .trailing) {
+                        MessengerHeaderBar(
+                            title: "Neovisne poruke",
+                            isActive: isConnectedToRoom,
+                            selectedThemeIndex: $selectedThemeIndex,
+                            onClose: closeWindow,
+                            onMinimize: { },
+                            onSearch: { },
+                            onQuickSettings: { },
+                            showsBottomBar: false
+                        ) {
+                            EmptyView()
+                        }
+                        
                     }
 
                     Spacer()
@@ -65,74 +92,110 @@ struct IndependentMessagesWindow: View {
                     chatBackgroundColor
                         .ignoresSafeArea()
 
-                    VStack(spacing: 16) {
-                        Text("Agent za neovisne poruke")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.white)
+                    VStack(spacing: 12) {
 
-                        if !roomId.isEmpty {
-                            Text("Spojeno na sobu: \(roomId)")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white.opacity(0.7))
+                        // “agent” blok
+                        VStack(spacing: 8) {
+                            Text("Agent za neovisne poruke")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.white)
+
+                            if !roomId.isEmpty {
+                                Text("Spojeno na sobu: \(roomId)")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+
+                            Text("Ovdje će kasnije doći vizualni prikaz P2P/ARP/Loc/Blo topologije i dijagnostike.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.6))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
                         }
+                        .padding(.top, 4)
 
-                        Text("Ovdje će kasnije doći vizualni agent koji pomaže oko konekcije, statusa i potencijalnih problema. Za sada je ovo samo prikaz nakon uspješnog spajanja.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.6))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
+                        Spacer()
+
+                        // donji input bar za slanje poruka
+                        HStack {
+                            Spacer()
+                            MessagesInputBar(
+                                messageText: $messageText,
+                                sendOnEnter: sendOnEnter,
+                                controlSize: controlSize,
+                                barWidth: barWidth,
+                                barHeight: barHeight
+                            ) { text in
+                                roomSession.sendText(text)
+                            }
+                            Spacer()
+                        }
+                        .padding(.bottom, 8)
                     }
-                    .padding(16)
+                    .padding(.top, 8)
                 }
 
             } else {
-                // ==============================
-                //    EKRAN ZA PIN / SOBU
-                // ==============================
-                Spacer()
+                // =========================
+                //   EKRAN ZA PIN / CONNECT
+                // =========================
+                ZStack {
+                    Color.clear
 
-                VStack(spacing: 16) {
-                    ConnectionToRoomView(
-                        title: "Neovisne poruke",
-                        buttonTitle: "Poveži se",
-                        showsConnectButton: true,
-                        isServerConnected: isServerConnected,
-                        message: connectStatusText
-                    ) { code in
-                        roomId = code
-                        isConnectingToRoom = true
-                        connectStatusText = "Povezujem se na server…"
+                    VStack {
+                        Spacer()
 
-                        roomSession.joinRoom(code: code, using: session) { success, errorText in
-                            DispatchQueue.main.async {
-                                isConnectingToRoom = false
-                                if success {
-                                    isServerConnected = true
-                                    isConnectedToRoom = true
-                                    connectStatusText = nil
-                                } else {
-                                    isServerConnected = false
-                                    connectStatusText = errorText ?? "Neuspjelo povezivanje."
+                        ConnectionToRoomView(
+                            title: "Neovisne poruke",
+                            buttonTitle: "Poveži se",
+                            showsConnectButton: true,
+                            isServerConnected: isServerConnected,
+                            message: connectStatusText
+                        ) { code in
+                            // onConnect
+                            roomId = code
+                            isConnectingToRoom = true
+                            connectStatusText = "Povezujem se na server…"
+                            
+                            // Inicijaliziraj agent context i watchman PRIJE spajanja
+                            // Ovo je kritično - agent mora biti spreman prije nego što se primi session_ready
+                            setupAgentSystem()
+                            
+                            roomSession.joinRoom(code: code, using: session) { success, errorText in
+                                DispatchQueue.main.async {
+                                    isConnectingToRoom = false
+                                    if success {
+                                        isServerConnected = true
+                                        isConnectedToRoom = true
+                                        connectStatusText = nil
+                                    } else {
+                                        isServerConnected = false
+                                        connectStatusText = errorText ?? "Neuspjelo povezivanje."
+                                    }
                                 }
                             }
+                        } onCancel: {
+                            closeWindow()
                         }
-                    } onCancel: {
-                        closeWindow()
-                    }
+                        .frame(maxWidth: 420)
 
-                    if isConnectingToRoom {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                                .scaleEffect(0.9)
-                            Text("Čekam drugu stranu…")
-                                .font(.system(size: 11))
+                        if isConnectingToRoom {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                    .scaleEffect(0.9)
+                                Text("Čekam drugu stranu…")
+                                    .font(.system(size: 11))
+                            }
+                            .foregroundColor(.white.opacity(0.85))
+                            .padding(.top, 8)
                         }
-                        .foregroundColor(.white.opacity(0.85))
+
+                        Spacer()
                     }
                 }
-                .frame(maxWidth: 420)
-
-                Spacer()
+                .background(
+                    Color.clear   // na PIN ekranu – bez chat pozadine
+                )
             }
         }
         .background(
@@ -140,23 +203,38 @@ struct IndependentMessagesWindow: View {
             ? chatBackgroundColor
             : Color.clear
         )
-        .onAppear {
-            // sinkroniziraj temu s globalnim stanjem
-            if let raw = Int(session.selectedTheme) {
-                selectedThemeIndex = raw
-            } else {
-                selectedThemeIndex = 0
-            }
-        }
-        .onChange(of: selectedThemeIndex) { newValue in
-            session.selectedTheme = String(newValue)
-        }
     }
 
+    // MARK: - Agent Setup
+    
+    private func setupAgentSystem() {
+        // Kreiraj agent context ako već nije kreiran
+        if agentContext == nil {
+            let context = IndependentMessagesAgentContext(
+                roomSessionManager: roomSession,
+                relayClient: RelayClient.shared,
+                conversationManager: conversationManager
+            )
+            agentContext = context
+            
+            // Kreiraj i pokreni watchman
+            let watch = IndependentMessagesWatchman(context: context)
+            watch.start()
+            watchman = watch
+            
+            print("[IndependentMessagesWindow] ✅ Agent sistem inicijaliziran i pokrenut")
+        }
+    }
+    
     // MARK: - Close
 
     private func closeWindow() {
         roomSession.close()
+        
+        // Zaustavi watchman
+        watchman?.stop()
+        watchman = nil
+        agentContext = nil
 
         if let idx = windowManager.windows.firstIndex(
             where: { $0.kind == .independentMessages && !$0.isDocked }

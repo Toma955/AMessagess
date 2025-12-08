@@ -102,11 +102,19 @@ final class RoomSessionManager: ObservableObject {
     private var webSocketTask: URLSessionWebSocketTask?
 
     // join state
-    private var roomCode: String?
+    var roomCode: String?  // Promijenjeno u public da agent može pristupiti
     private var pendingJoinCompletion: ((Bool, String?) -> Void)?
 
     // reference na SessionManager radi masterKey-a i serverAddress-a
     private weak var sessionRef: SessionManager?
+    
+    // Callback za sistemske poruke (za agent integraciju)
+    var systemMessageHandler: ((String) -> Void)?
+    
+    // Getter za masterKey (za agent)
+    var masterKey: SymmetricKey? {
+        return sessionRef?.masterKey
+    }
 
     // ratchet za log (disk)
     private var logRatchetState: LogRatchetState?
@@ -413,6 +421,16 @@ final class RoomSessionManager: ObservableObject {
                     self.messages.append(msg)
                 }
                 appendToLog(message: msg)
+                
+                // Obavijesti sistem message handler da se konekcija uspostavila
+                // Ovo će triggerati slanje endpoint snapshot-a u agentu
+                if let handler = self.systemMessageHandler {
+                    print("📡 [ROOM] Šaljem signal 'connection_established' agentu")
+                    // Pošalji signal da se konekcija uspostavila (može agent reagirati)
+                    handler("connection_established:\(code)")
+                } else {
+                    print("⚠️ [ROOM] systemMessageHandler nije postavljen - endpoint snapshot se neće poslati")
+                }
             }
 
         case "msg":
@@ -486,6 +504,18 @@ final class RoomSessionManager: ObservableObject {
             }
         }
 
+        // Provjeri je li sistemska poruka (ima prefiks "sys:")
+        // Može biti enkriptirana, pa provjeravamo nakon dekripcije
+        if plainText.hasPrefix("sys:") {
+            // Proslijedi sistemsku poruku agentu
+            systemMessageHandler?(plainText)
+            return // Ne dodaj sistemsku poruku u normalne poruke
+        }
+        
+        // Također provjeri je li možda enkriptirana sistemska poruka
+        // (ako je enkriptirana, plainText će biti base64, ali možemo provjeriti strukturu)
+        // Za sada ćemo ostaviti da agent provjerava sve primljene poruke
+        
         let msg = Message(
             id: UUID(),
             conversationId: code,
@@ -498,6 +528,9 @@ final class RoomSessionManager: ObservableObject {
             self.messages.append(msg)
         }
         appendToLog(message: msg)
+        
+        // Obavijesti RelayClient o primljenoj poruci (za agent integraciju)
+        RelayClient.shared.handleIncomingMessage(text: plainText, conversationId: code)
     }
 
     private func handleServerError(dict: [String: Any]) {
